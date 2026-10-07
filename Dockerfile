@@ -5,6 +5,7 @@ WORKDIR /app
 # Install system dependencies for legendary-gl (Epic Games) and Nile
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better layer caching
@@ -26,6 +27,10 @@ RUN pip install --no-cache-dir pycryptodome zstandard requests protobuf json5 \
 # Copy application code
 COPY web/ ./web/
 
+# Copy entrypoint
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Create data directory for the database
 RUN mkdir -p /data
 
@@ -35,5 +40,5 @@ ENV DATABASE_PATH=/data/game_library.db
 
 EXPOSE 5050
 
-# Run the FastAPI application
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "web.main:app", "--host", "0.0.0.0", "--port", "5050"]

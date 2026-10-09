@@ -120,78 +120,112 @@
     }
 
     // Ubisoft game scraper
-    else if (host.includes('ubisoft.com')) {
-        (async function() {
-            var sleep = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
+else if (host.includes('ubisoft.com')) {
+    (async () => {
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-            var content = createOverlay('#667eea', 'Ubisoft Import');
-            content.textContent = 'Expanding all sections...';
+        const content = createOverlay('#667eea', 'Ubisoft Import');
+        content.textContent = 'Loading all games...';
 
-            // Click all "More" accordion buttons to expand game list
-            var expandCount = 0;
-            while (true) {
-                var moreBtn = Array.from(document.querySelectorAll('div[class*="Accordion-toggleShow"]'))
-                    .find(function(el) { return /more/i.test(el.innerText.trim()); });
+        // 1. Expand the list with a safety cap and visibility check
+        const MAX_EXPANDS = 50;
+        let expandCount = 0;
 
-                if (!moreBtn) break;
-                moreBtn.click();
-                expandCount++;
-                content.textContent = 'Expanding sections... (' + expandCount + ')';
-                await sleep(1200);
-            }
-
-            content.textContent = 'Parsing games...';
-
-            // Parse games from page text
-            var lines = document.body.innerText.split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
-            var rawGames = [];
-
-            for (var i = 0; i < lines.length; i++) {
-                if (lines[i].startsWith('Played for')) {
-                    rawGames.push({
-                        title: lines[i - 1] || null,
-                        playtime: lines[i].replace('Played for ', ''),
-                        lastPlayed: lines[i + 1] ? lines[i + 1].replace('Last played ', '') : null,
-                        platform: lines[i + 2] || null
-                    });
-                }
-            }
-
-            // Deduplicate by creating a unique key
-            var uniqueMap = new Map();
-            rawGames.forEach(function(g) {
-                var key = g.title + '|' + g.playtime + '|' + g.lastPlayed + '|' + g.platform;
-                if (!uniqueMap.has(key)) {
-                    uniqueMap.set(key, g);
-                }
+        while (expandCount < MAX_EXPANDS) {
+            const moreBtn = Array.from(document.querySelectorAll('button')).find((el) => {
+                const text = el.innerText.trim();
+                const isVisible = el.offsetParent !== null;
+                return /see more/i.test(text) && isVisible && !el.disabled;
             });
-            var uniqueGames = Array.from(uniqueMap.values());
 
-            content.textContent = 'Found ' + uniqueGames.length + ' games. Sending to Backlogia...';
+            if (!moreBtn) break;
 
-            try {
-                var response = await fetch(LOCAL_URL + '/api/import/ubisoft', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ games: uniqueGames })
-                });
-                var data = await response.json();
+            const prevCardCount = document.querySelectorAll('div[class*="GameCard_card"]').length;
+            moreBtn.click();
+            expandCount++;
+            content.textContent = `Loading more games... (${expandCount})`;
 
-                if (data.success) {
-                    content.innerHTML = '<span style="color:#4caf50">' + data.message + '</span>' +
-                        '<div style="margin-top:10px;color:#888;font-size:12px">Games have been imported to your Backlogia library.</div>';
-                } else {
-                    content.innerHTML = '<span style="color:#f44336">Error: ' + (data.detail || 'Unknown error') + '</span>';
+            // Dynamic wait: wait until new cards appear or timeout occurs (max 3s)
+            let waited = 0;
+            while (waited < 3000) {
+                await sleep(300);
+                waited += 300;
+                if (document.querySelectorAll('div[class*="GameCard_card"]').length > prevCardCount) {
+                    break;
                 }
-            } catch (e) {
-                content.innerHTML = '<span style="color:#f44336">Failed to connect to Backlogia</span>' +
-                    '<div style="margin-top:10px;color:#888;font-size:12px">' +
-                    'Could not reach: ' + LOCAL_URL + '<br><br>' +
-                    'Make sure Backlogia is running on your computer.' +
-                    '</div>';
             }
-        })();
-    }
+        }
+
+        content.textContent = 'Parsing games...';
+
+        // 2. Parse game cards from the DOM (English labels only)
+        const rawGames = [];
+        const cards = document.querySelectorAll('div[class*="GameCard_card"]');
+
+        cards.forEach((card) => {
+            const titleEl = card.querySelector('img[alt]') || card.querySelector('h3, h2');
+            const title = titleEl ? (titleEl.getAttribute('alt') || titleEl.textContent).trim() : null;
+
+            // Skip cards without a valid title or summary cards (e.g. "Total time played")
+            if (!title || /total time played/i.test(title)) return;
+
+            const statLabels = card.querySelectorAll('p.uds-text');
+            let playtime = null;
+            let lastPlayed = null;
+            let platform = null;
+
+            statLabels.forEach((label) => {
+                const text = label.textContent.trim().toLowerCase();
+                const valueEl = label.nextElementSibling;
+                const value = valueEl ? valueEl.textContent.trim() : null;
+
+                if (text === 'played time') playtime = value;
+                else if (text === 'last played') lastPlayed = value;
+                else if (text === 'platform') platform = value;
+            });
+
+            rawGames.push({ title, playtime, lastPlayed, platform });
+        });
+
+        // 3. Deduplicate entries
+        const uniqueMap = new Map();
+        rawGames.forEach((g) => {
+            const key = `${g.title}|${g.playtime}|${g.lastPlayed}|${g.platform}`;
+            if (!uniqueMap.has(key)) uniqueMap.set(key, g);
+        });
+        const uniqueGames = Array.from(uniqueMap.values());
+
+        content.textContent = `Found ${uniqueGames.length} games. Sending to Backlogia...`;
+
+        // 4. Send payload to local backend
+        try {
+            const response = await fetch(`${LOCAL_URL}/api/import/ubisoft`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ games: uniqueGames })
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                content.innerHTML = `
+                    <span style="color:#4caf50">${document.createTextNode(data.message || 'Import complete').textContent}</span>
+                    <div style="margin-top:10px;color:#888;font-size:12px">Games have been imported to your Backlogia library.</div>
+                `;
+            } else {
+                const errorMsg = data.detail || 'Unknown error';
+                content.innerHTML = `<span style="color:#f44336">Error: ${document.createTextNode(errorMsg).textContent}</span>`;
+            }
+        } catch (e) {
+            content.innerHTML = `
+                <span style="color:#f44336">Failed to connect to Backlogia</span>
+                <div style="margin-top:10px;color:#888;font-size:12px">
+                    Could not reach: ${document.createTextNode(LOCAL_URL).textContent}<br><br>
+                    Make sure Backlogia is running on your computer.
+                </div>
+            `;
+        }
+    })();
+}
 
     // Xbox token extraction (Note: xbox.com blocks external scripts, so this is handled inline in settings.html)
     // This code is here for reference and for xboxlive.com subdomains that might allow it

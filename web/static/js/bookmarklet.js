@@ -120,7 +120,7 @@
     }
 
     // Ubisoft game scraper
-    else if (host.includes('account.ubisoft.com')) {
+    else if (host.includes('ubisoft.com')) {
         (async function() {
             var sleep = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
 
@@ -390,7 +390,7 @@
             '<span style="font-size:20px">🎮</span>' +
             '<div><strong style="color:#107C10">Xbox.com</strong><br><span style="font-size:12px;color:#888">Extract your Xbox auth token</span></div>' +
             '</a>' +
-            '<a href="https://account.ubisoft.com/en-US/games-activity" target="_blank" style="display:flex;align-items:center;gap:12px;padding:12px;background:rgba(0,112,255,0.1);border-radius:8px;text-decoration:none;color:#fff;border:1px solid #0070ff">' +
+            '<a href="https://www.ubisoft.com/en-us/account/games-activity" target="_blank" style="display:flex;align-items:center;gap:12px;padding:12px;background:rgba(0,112,255,0.1);border-radius:8px;text-decoration:none;color:#fff;border:1px solid #0070ff">' +
             '<span style="font-size:20px">🕹️</span>' +
             '<div><strong style="color:#0070ff">Ubisoft Games Activity</strong><br><span style="font-size:12px;color:#888">Import your Ubisoft library</span></div>' +
             '</a>' +

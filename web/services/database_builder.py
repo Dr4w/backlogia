@@ -122,14 +122,14 @@ def mark_removed_games(conn, store_name, seen_store_ids):
     # Mark games NOT in the seen set as removed
     cursor.execute(
         f"UPDATE games SET removed = 1 WHERE store = ? AND store_id NOT IN ({placeholders}) AND (removed IS NULL OR removed = 0)",
-        [store_name] + seen_list
+        [store_name] + seen_list,
     )
     newly_removed = cursor.rowcount
 
     # Restore games that reappeared
     cursor.execute(
         f"UPDATE games SET removed = 0 WHERE store = ? AND store_id IN ({placeholders}) AND removed = 1",
-        [store_name] + seen_list
+        [store_name] + seen_list,
     )
     restored = cursor.rowcount
 
@@ -157,10 +157,19 @@ def import_steam_games(conn):
                 # Build cover image URL from appid
                 appid = game.get("appid")
                 store_id = str(appid) if appid else None
-                cover_image = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/library_600x900_2x.jpg" if appid else None
-                background_image = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/library_hero.jpg" if appid else None
+                cover_image = (
+                    f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/library_600x900_2x.jpg"
+                    if appid
+                    else None
+                )
+                background_image = (
+                    f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/library_hero.jpg"
+                    if appid
+                    else None
+                )
 
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO games (
                         name, store, store_id, cover_image, background_image, icon,
                         playtime_hours, critics_score, extra_data, updated_at
@@ -174,18 +183,20 @@ def import_steam_games(conn):
                         critics_score = excluded.critics_score,
                         extra_data = excluded.extra_data,
                         updated_at = excluded.updated_at
-                """, (
-                    game.get("name"),
-                    "steam",
-                    store_id,
-                    cover_image,
-                    background_image,
-                    game.get("icon_url"),
-                    game.get("playtime_hours"),
-                    game.get("review_score"),  # Steam user review percentage
-                    json.dumps(game),
-                    datetime.now().isoformat()
-                ))
+                """,
+                    (
+                        game.get("name"),
+                        "steam",
+                        store_id,
+                        cover_image,
+                        background_image,
+                        game.get("icon_url"),
+                        game.get("playtime_hours"),
+                        game.get("review_score"),  # Steam user review percentage
+                        json.dumps(game),
+                        datetime.now().isoformat(),
+                    ),
+                )
                 if store_id:
                     seen_store_ids.add(store_id)
                 count += 1
@@ -223,7 +234,8 @@ def import_epic_games(conn):
         for game in games:
             try:
                 store_id = game.get("app_name")
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO games (
                         name, store, store_id, description, developers,
                         supported_platforms, cover_image, release_date,
@@ -243,22 +255,26 @@ def import_epic_games(conn):
                         dlcs = excluded.dlcs,
                         extra_data = excluded.extra_data,
                         updated_at = excluded.updated_at
-                """, (
-                    game.get("name"),
-                    "epic",
-                    store_id,
-                    game.get("description"),
-                    json.dumps([game.get("developer")]) if game.get("developer") else None,
-                    json.dumps(game.get("supported_platforms", [])),
-                    game.get("cover_image"),
-                    game.get("created_date"),
-                    game.get("created_date"),
-                    game.get("last_modified"),
-                    game.get("can_run_offline"),
-                    json.dumps(game.get("dlcs", [])),
-                    json.dumps(game),
-                    datetime.now().isoformat()
-                ))
+                """,
+                    (
+                        game.get("name"),
+                        "epic",
+                        store_id,
+                        game.get("description"),
+                        json.dumps([game.get("developer")])
+                        if game.get("developer")
+                        else None,
+                        json.dumps(game.get("supported_platforms", [])),
+                        game.get("cover_image"),
+                        game.get("created_date"),
+                        game.get("created_date"),
+                        game.get("last_modified"),
+                        game.get("can_run_offline"),
+                        json.dumps(game.get("dlcs", [])),
+                        json.dumps(game),
+                        datetime.now().isoformat(),
+                    ),
+                )
                 if store_id:
                     seen_store_ids.add(store_id)
                 count += 1
@@ -316,7 +332,8 @@ def import_gog_games(conn):
                         combined_tags.append(tag)
 
                 store_id = game.get("product_id")
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO games (
                         name, store, store_id, description, developers,
                         publishers, genres, cover_image, background_image,
@@ -334,22 +351,24 @@ def import_gog_games(conn):
                         critics_score = excluded.critics_score,
                         extra_data = excluded.extra_data,
                         updated_at = excluded.updated_at
-                """, (
-                    game.get("name"),
-                    "gog",
-                    store_id,
-                    game.get("summary"),
-                    json.dumps(game.get("developers", [])),
-                    json.dumps(game.get("publishers", [])),
-                    json.dumps(combined_tags),
-                    game.get("cover_image"),
-                    game.get("background_image"),
-                    game.get("icon"),
-                    release_date,
-                    game.get("critics_score"),
-                    json.dumps(game),
-                    datetime.now().isoformat()
-                ))
+                """,
+                    (
+                        game.get("name"),
+                        "gog",
+                        store_id,
+                        game.get("summary"),
+                        json.dumps(game.get("developers", [])),
+                        json.dumps(game.get("publishers", [])),
+                        json.dumps(combined_tags),
+                        game.get("cover_image"),
+                        game.get("background_image"),
+                        game.get("icon"),
+                        release_date,
+                        game.get("critics_score"),
+                        json.dumps(game),
+                        datetime.now().isoformat(),
+                    ),
+                )
                 if store_id:
                     seen_store_ids.add(str(store_id))
                 count += 1
@@ -405,7 +424,8 @@ def import_itch_games(conn):
                     platforms.append("Android")
 
                 store_id = str(game.get("id"))
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO games (
                         name, store, store_id, description, cover_image,
                         supported_platforms, release_date, extra_data, updated_at
@@ -418,17 +438,19 @@ def import_itch_games(conn):
                         release_date = excluded.release_date,
                         extra_data = excluded.extra_data,
                         updated_at = excluded.updated_at
-                """, (
-                    game.get("title"),
-                    "itch",
-                    store_id,
-                    game.get("short_text"),
-                    game.get("cover_url"),
-                    json.dumps(platforms) if platforms else None,
-                    game.get("published_at"),
-                    json.dumps(game),
-                    datetime.now().isoformat()
-                ))
+                """,
+                    (
+                        game.get("title"),
+                        "itch",
+                        store_id,
+                        game.get("short_text"),
+                        game.get("cover_url"),
+                        json.dumps(platforms) if platforms else None,
+                        game.get("published_at"),
+                        json.dumps(game),
+                        datetime.now().isoformat(),
+                    ),
+                )
                 if store_id:
                     seen_store_ids.add(store_id)
                 count += 1
@@ -470,7 +492,8 @@ def import_humble_games(conn):
         for game in games:
             try:
                 store_id = game.get("machine_name")
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO games (
                         name, store, store_id, cover_image, icon,
                         supported_platforms, publishers, release_date,
@@ -485,18 +508,20 @@ def import_humble_games(conn):
                         release_date = excluded.release_date,
                         extra_data = excluded.extra_data,
                         updated_at = excluded.updated_at
-                """, (
-                    game.get("human_name"),
-                    "humble",
-                    store_id,
-                    game.get("icon"),
-                    game.get("icon"),
-                    json.dumps(game.get("platforms", [])),
-                    json.dumps([game.get("payee")]) if game.get("payee") else None,
-                    game.get("created"),
-                    json.dumps(game),
-                    datetime.now().isoformat()
-                ))
+                """,
+                    (
+                        game.get("human_name"),
+                        "humble",
+                        store_id,
+                        game.get("icon"),
+                        game.get("icon"),
+                        json.dumps(game.get("platforms", [])),
+                        json.dumps([game.get("payee")]) if game.get("payee") else None,
+                        game.get("created"),
+                        json.dumps(game),
+                        datetime.now().isoformat(),
+                    ),
+                )
                 if store_id:
                     seen_store_ids.add(store_id)
                 count += 1
@@ -538,7 +563,8 @@ def import_battlenet_games(conn):
         for game in games:
             try:
                 store_id = game.get("title_id")
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO games (
                         name, store, store_id, cover_image,
                         extra_data, updated_at
@@ -548,14 +574,16 @@ def import_battlenet_games(conn):
                         cover_image = excluded.cover_image,
                         extra_data = excluded.extra_data,
                         updated_at = excluded.updated_at
-                """, (
-                    game.get("name"),
-                    "battlenet",
-                    store_id,
-                    game.get("cover_image"),
-                    json.dumps(game.get("raw_data", {})),
-                    datetime.now().isoformat()
-                ))
+                """,
+                    (
+                        game.get("name"),
+                        "battlenet",
+                        store_id,
+                        game.get("cover_image"),
+                        json.dumps(game.get("raw_data", {})),
+                        datetime.now().isoformat(),
+                    ),
+                )
                 if store_id:
                     seen_store_ids.add(str(store_id))
                 count += 1
@@ -601,7 +629,8 @@ def import_ea_games(conn):
                 publishers = [game.get("publisher")] if game.get("publisher") else None
 
                 store_id = game.get("offer_id")
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO games (
                         name, store, store_id, cover_image,
                         developers, publishers, release_date,
@@ -615,17 +644,19 @@ def import_ea_games(conn):
                         release_date = excluded.release_date,
                         extra_data = excluded.extra_data,
                         updated_at = excluded.updated_at
-                """, (
-                    game.get("name"),
-                    "ea",
-                    store_id,
-                    game.get("cover_image"),
-                    json.dumps(developers) if developers else None,
-                    json.dumps(publishers) if publishers else None,
-                    game.get("release_date"),
-                    json.dumps(game.get("raw_data", {})),
-                    datetime.now().isoformat()
-                ))
+                """,
+                    (
+                        game.get("name"),
+                        "ea",
+                        store_id,
+                        game.get("cover_image"),
+                        json.dumps(developers) if developers else None,
+                        json.dumps(publishers) if publishers else None,
+                        game.get("release_date"),
+                        json.dumps(game.get("raw_data", {})),
+                        datetime.now().isoformat(),
+                    ),
+                )
                 if store_id:
                     seen_store_ids.add(store_id)
                 count += 1
@@ -671,7 +702,8 @@ def import_amazon_games(conn):
                 publishers = [game.get("publisher")] if game.get("publisher") else None
 
                 store_id = game.get("product_id")
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO games (
                         name, store, store_id, cover_image, icon,
                         developers, publishers, extra_data, updated_at
@@ -684,17 +716,19 @@ def import_amazon_games(conn):
                         publishers = excluded.publishers,
                         extra_data = excluded.extra_data,
                         updated_at = excluded.updated_at
-                """, (
-                    game.get("name"),
-                    "amazon",
-                    store_id,
-                    game.get("icon_url"),
-                    game.get("icon_url"),
-                    json.dumps(developers) if developers else None,
-                    json.dumps(publishers) if publishers else None,
-                    json.dumps(game.get("raw_data", {})),
-                    datetime.now().isoformat()
-                ))
+                """,
+                    (
+                        game.get("name"),
+                        "amazon",
+                        store_id,
+                        game.get("icon_url"),
+                        game.get("icon_url"),
+                        json.dumps(developers) if developers else None,
+                        json.dumps(publishers) if publishers else None,
+                        json.dumps(game.get("raw_data", {})),
+                        datetime.now().isoformat(),
+                    ),
+                )
                 if store_id:
                     seen_store_ids.add(store_id)
                 count += 1
@@ -749,7 +783,8 @@ def import_xbox_games(conn):
                 }
 
                 store_id = game.get("store_id")
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO games (
                         name, store, store_id, cover_image,
                         developers, publishers, release_date,
@@ -763,17 +798,19 @@ def import_xbox_games(conn):
                         release_date = excluded.release_date,
                         extra_data = excluded.extra_data,
                         updated_at = excluded.updated_at
-                """, (
-                    game.get("name"),
-                    "xbox",
-                    store_id,
-                    game.get("cover_image"),
-                    json.dumps(developers) if developers else None,
-                    json.dumps(publishers) if publishers else None,
-                    game.get("release_date"),
-                    json.dumps(extra_data),
-                    datetime.now().isoformat()
-                ))
+                """,
+                    (
+                        game.get("name"),
+                        "xbox",
+                        store_id,
+                        game.get("cover_image"),
+                        json.dumps(developers) if developers else None,
+                        json.dumps(publishers) if publishers else None,
+                        game.get("release_date"),
+                        json.dumps(extra_data),
+                        datetime.now().isoformat(),
+                    ),
+                )
                 if store_id:
                     seen_store_ids.add(store_id)
                 count += 1
@@ -826,7 +863,8 @@ def import_local_games(conn):
                     extra_data["manual_igdb_id"] = game.get("igdb_id")
 
                 store_id = game.get("store_id")
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO games (
                         name, store, store_id, description, cover_image,
                         developers, genres, release_date, extra_data, updated_at
@@ -840,18 +878,20 @@ def import_local_games(conn):
                         release_date = excluded.release_date,
                         extra_data = excluded.extra_data,
                         updated_at = excluded.updated_at
-                """, (
-                    game.get("name"),
-                    "local",
-                    store_id,
-                    game.get("description"),
-                    game.get("cover_image"),
-                    json.dumps(developers) if developers else None,
-                    json.dumps(genres) if genres else None,
-                    game.get("release_date"),
-                    json.dumps(extra_data),
-                    datetime.now().isoformat()
-                ))
+                """,
+                    (
+                        game.get("name"),
+                        "local",
+                        store_id,
+                        game.get("description"),
+                        game.get("cover_image"),
+                        json.dumps(developers) if developers else None,
+                        json.dumps(genres) if genres else None,
+                        game.get("release_date"),
+                        json.dumps(extra_data),
+                        datetime.now().isoformat(),
+                    ),
+                )
                 if store_id:
                     seen_store_ids.add(store_id)
                 count += 1
@@ -914,7 +954,7 @@ def calculate_average_rating(
         ratings.append(float(total_rating))
 
     # Metacritic critic score is 0-100
-    if metacritic_score is not None:
+    if metacritic_score is not None and metacritic_score >= 0:
         ratings.append(float(metacritic_score))
 
     # Metacritic user score is 0-10, normalize to 0-100
@@ -928,16 +968,15 @@ def calculate_average_rating(
 
 
 def update_average_rating(conn, game_id):
-    """
-    Fetch all ratings for a game and update its average_rating.
-    Call this after updating any rating field for a game.
-    """
     cursor = conn.cursor()
 
-    # First ensure the column exists
     add_average_rating_column(conn)
 
-    # Fetch all rating fields for this game
+    # Aggiunta
+    from .metacritic_sync import add_metacritic_columns
+
+    add_metacritic_columns(conn)
+
     cursor.execute(
         """SELECT critics_score, igdb_rating, aggregated_rating, total_rating,
                   metacritic_score, metacritic_user_score

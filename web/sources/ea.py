@@ -4,6 +4,7 @@
 # User obtains bearer token via JavaScript snippet in browser console
 
 import json
+import os
 import requests
 
 from ..services.settings import get_ea_credentials
@@ -16,6 +17,27 @@ REQUIRED_HEADERS = {
     "Accept": "application/json",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 }
+
+# Persisted query hash from Jeshibu/PlayniteExtensions (branch "ea", EaWebsite.cs).
+# If EA answers PersistedQueryNotFound, the hash is outdated: update it here
+# or override it with the EA_QUERY_HASH environment variable (or --hash in CLI).
+DEFAULT_QUERY_HASH = "779f1cd1355699752e20c0b3877847f4e3010ef5de131c248e98f8eff84f0718"
+
+# Only EA-native ownership methods (Steam/Epic ones removed: those games
+# are already imported from their own stores).
+OWNERSHIP_METHODS = [
+    "UNKNOWN", "ASSOCIATION", "PURCHASE", "REDEMPTION", "GIFT_RECEIPT",
+    "ENTITLEMENT_GRANT", "DIRECT_ENTITLEMENT", "PRE_ORDER_PURCHASE",
+    "VAULT", "XGP_VAULT",
+]
+
+# Set EA_DEBUG=1 to print the response structure and a sample item.
+DEBUG = os.environ.get("EA_DEBUG") == "1"
+
+
+def get_query_hash():
+    """Return the persisted query hash (env var overrides the default)."""
+    return os.environ.get("EA_QUERY_HASH", DEFAULT_QUERY_HASH).strip()
 
 
 def get_bearer_token():
@@ -32,61 +54,55 @@ def get_bearer_token():
     return token if token else None
 
 
-def get_owned_games(token):
-    """Query GraphQL endpoint for owned games using Jeshibu's persisted query approach."""
+def get_owned_games(token, query_hash=None):
+    """Query GraphQL endpoint for owned games (persisted query via GET, as in PlayniteExtensions)."""
+    query_hash = query_hash or get_query_hash()
     try:
         session = requests.Session()
         headers = {
             "Accept": "application/json",
-            "Content-Type": "application/json",
             "Authorization": f"Bearer {token}",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": REQUIRED_HEADERS["User-Agent"],
         }
 
         all_games = []
-        next_offset = None
-        limit = 200
-
-        # Persisted query hash from Jeshibu's PlayniteExtensions
-        QUERY_HASH = "5de4178ee7e1f084ce9deca856c74a9e03547a67dfafc0cb844d532fb54ae73d"
+        next_offset = "0"
+        limit = 500
+        seen_offsets = set()
 
         while True:
-            # Build variables - try without ownershipMethods to get all games
             variables = {
                 "isMac": False,
                 "addFieldsToPreloadGames": True,
-                "locale": "en-US",
+                "locale": "en",
                 "limit": limit,
+                "next": next_offset,
                 "type": ["DIGITAL_FULL_GAME", "PACKAGED_FULL_GAME"],
                 "entitlementEnabled": True,
                 "storefronts": ["EA"],
-                "platforms": ["PC"]
+                "ownershipMethods": OWNERSHIP_METHODS,
+                "platforms": ["PC"],
             }
-
-            if next_offset:
-                variables["next"] = next_offset
-
-            # Use persisted query extension
-            payload = {
+            params = {
                 "operationName": "getPreloadedOwnedGames",
-                "variables": variables,
-                "extensions": {
-                    "persistedQuery": {
-                        "version": 1,
-                        "sha256Hash": QUERY_HASH
-                    }
-                }
+                "variables": json.dumps(variables, separators=(",", ":")),
+                "extensions": json.dumps(
+                    {"persistedQuery": {"version": 1, "sha256Hash": query_hash}},
+                    separators=(",", ":"),
+                ),
             }
 
-            response = session.post(
-                GRAPHQL_ENDPOINT,
-                headers=headers,
-                json=payload
-            )
+            response = session.get(GRAPHQL_ENDPOINT, headers=headers, params=params)
 
             print(f"  GraphQL response status: {response.status_code}")
 
-            if response.status_code == 401:
+            if "PersistedQueryNotFound" in response.text:
+                print("  EA no longer recognizes the persisted query hash.")
+                print("  The token is probably fine: update DEFAULT_QUERY_HASH in ea.py")
+                print("  or set the EA_QUERY_HASH environment variable.")
+                break
+
+            if response.status_code in (401, 403):
                 print("  Token expired or invalid - please get a new token")
                 break
 
@@ -100,33 +116,33 @@ def get_owned_games(token):
                 print(f"  GraphQL response not JSON: {response.text[:200]}")
                 break
 
-            if "errors" in data:
+            if data.get("errors"):
                 print(f"  GraphQL errors: {data['errors']}")
                 break
 
-            # Debug: print the response structure
-            print(f"  Response keys: {list(data.keys())}")
-            if "data" in data:
-                print(f"  data keys: {list(data['data'].keys()) if data['data'] else 'None'}")
-                if data.get("data", {}).get("me"):
-                    print(f"  me keys: {list(data['data']['me'].keys())}")
+            if DEBUG:
+                print(f"  Response keys: {list(data.keys())}")
+                if data.get("data"):
+                    print(f"  data keys: {list(data['data'].keys())}")
+                    if data["data"].get("me"):
+                        print(f"  me keys: {list(data['data']['me'].keys())}")
 
             # Navigate the response structure
-            me = data.get("data", {}).get("me", {})
-            preloaded = me.get("preloadedOwnedGames", {})
-            items = preloaded.get("items", [])
+            # Jeshibu's code reads me.ownedGameProducts; keep the old key as fallback
+            me = (data.get("data") or {}).get("me") or {}
+            preloaded = me.get("ownedGameProducts") or me.get("preloadedOwnedGames") or {}
+            items = preloaded.get("items") or []
 
-            # If preloadedOwnedGames is empty, try other possible keys
+            # If the expected keys are empty, try other possible keys
             if not items:
                 for key in me.keys():
                     val = me.get(key)
                     if isinstance(val, dict) and "items" in val:
-                        items = val.get("items", [])
-                        print(f"  Found items under 'me.{key}'")
+                        items = val.get("items") or []
+                        preloaded = val
                         break
                     elif isinstance(val, list):
                         items = val
-                        print(f"  Found list under 'me.{key}'")
                         break
 
             print(f"  Got {len(items)} items")
@@ -134,16 +150,15 @@ def get_owned_games(token):
             if not items:
                 break
 
-            # Debug: print first item structure
-            if items and len(all_games) == 0:
+            if DEBUG and len(all_games) == 0:
                 print(f"  First item keys: {list(items[0].keys()) if isinstance(items[0], dict) else type(items[0])}")
                 print(f"  First item sample: {json.dumps(items[0], indent=2)[:1000]}")
 
             for item in items:
                 # Parse based on actual EA response structure:
                 # item.originOfferId, item.product.name, item.product.gameSlug, etc.
-                product = item.get("product", {})
-                base_item = product.get("baseItem", {})
+                product = item.get("product") or {}
+                base_item = product.get("baseItem") or {}
 
                 # Get name from product or baseItem
                 name = product.get("name") or base_item.get("title")
@@ -165,7 +180,7 @@ def get_owned_games(token):
 
                 # Get release date from lifecycle status
                 release_date = None
-                lifecycle = product.get("lifecycleStatus", [])
+                lifecycle = product.get("lifecycleStatus") or []
                 if lifecycle:
                     release_date = lifecycle[0].get("playableStartDate")
 
@@ -182,10 +197,11 @@ def get_owned_games(token):
                     "raw_data": item,
                 })
 
-            # Check for pagination
+            # Check for pagination (stop when no cursor, or cursor repeats)
             next_offset = preloaded.get("next")
-            if not next_offset or len(items) < limit:
+            if not next_offset or next_offset in seen_offsets:
                 break
+            seen_offsets.add(next_offset)
 
         return all_games
 
@@ -228,6 +244,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Import EA library")
     parser.add_argument("--token", type=str, help="EA bearer token (for testing)")
+    parser.add_argument("--hash", type=str, help="Persisted query hash override (for testing)")
     parser.add_argument("--export", type=str, help="Export to JSON file instead of database")
     args = parser.parse_args()
 
@@ -237,7 +254,7 @@ def main():
     if args.token:
         # Use provided token for testing
         print("Using provided token...")
-        games = get_owned_games(args.token)
+        games = get_owned_games(args.token, query_hash=args.hash)
     else:
         games = get_ea_library()
 

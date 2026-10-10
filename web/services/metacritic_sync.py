@@ -19,11 +19,13 @@ class MetacriticClient:
 
     def __init__(self, min_request_interval=0.5):
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-        })
+        self.session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+            }
+        )
         self.last_request_time = 0
         self.min_request_interval = min_request_interval
         self._lock = threading.Lock()
@@ -66,10 +68,14 @@ class MetacriticClient:
 
         # Find search result items
         # Metacritic uses different selectors over time, try multiple patterns
-        result_cards = soup.select('a[class*="c-pageSiteSearch-results-item"]')
+        # Current Metacritic markup: <div data-testid="search-item"><a href="/game/<slug>/">
+        result_cards = soup.select('div[data-testid="search-item"] a[href^="/game/"]')
 
         if not result_cards:
-            # Try alternative selector
+            # Legacy selectors
+            result_cards = soup.select('a[class*="c-pageSiteSearch-results-item"]')
+
+        if not result_cards:
             result_cards = soup.select('div.c-pageSiteSearch-results a[href*="/game/"]')
 
         for card in result_cards[:5]:  # Limit to top 5 results
@@ -86,23 +92,34 @@ class MetacriticClient:
                 slug = slug_match.group(1)
 
                 # Get game name from the card
-                title_el = card.select_one('p[class*="title"], h3, span[class*="title"]')
-                game_name = title_el.get_text(strip=True) if title_el else slug.replace("-", " ").title()
+                title_el = card.select_one(
+                    'p.c-search-item__title, p[class*="title"], h3, span[class*="title"]'
+                )
+                game_name = (
+                    title_el.get_text(strip=True)
+                    if title_el
+                    else slug.replace("-", " ").title()
+                )
 
                 # Get score if available
-                score_el = card.select_one('span[class*="metascore"], div[class*="metascore"]')
+                score_el = card.select_one(
+                    ".c-search-item__score .c-siteReviewScore span, "
+                    'span[class*="metascore"], div[class*="metascore"]'
+                )
                 score = None
                 if score_el:
                     score_text = score_el.get_text(strip=True)
                     if score_text.isdigit():
                         score = int(score_text)
 
-                results.append({
-                    "name": game_name,
-                    "slug": slug,
-                    "url": f"{self.BASE_URL}/game/{slug}/",
-                    "score": score,
-                })
+                results.append(
+                    {
+                        "name": game_name,
+                        "slug": slug,
+                        "url": f"{self.BASE_URL}/game/{slug}/",
+                        "score": score,
+                    }
+                )
             except Exception as e:
                 print(f"Error parsing search result: {e}")
                 continue
@@ -139,56 +156,68 @@ class MetacriticClient:
         }
 
         # Get game title
-        title_el = soup.select_one('div[class*="c-productHero_title"] h1, h1[class*="product_title"]')
+        title_el = soup.select_one(
+            'div[data-testid="hero-title"] h1, '
+            'div[class*="c-productHero_title"] h1, '
+            'h1[class*="product_title"]'
+        )
         if title_el:
             result["name"] = title_el.get_text(strip=True)
 
-        # Get critic score (Metascore)
-        metascore_el = soup.select_one(
-            'div[class*="c-siteReviewScore"] span, '
-            'span[class*="metascore_w"], '
-            'div[class*="metascore"] span'
-        )
-        if metascore_el:
-            score_text = metascore_el.get_text(strip=True)
-            if score_text.isdigit():
-                result["critic_score"] = int(score_text)
+        # Current markup: score badges expose the value in title/aria-label,
+        # e.g. title="Metascore 93 out of 100" / aria-label="User score 8.5 out of 10"
+        def _score_from_label(prefix):
+            el = soup.select_one(
+                f'[data-testid="global-score-value-wrapper"][title^="{prefix}" i], '
+                f'[data-testid="global-score-value-wrapper"][aria-label^="{prefix}" i]'
+            )
+            if not el:
+                return None
 
-        # Try alternative metascore selector
+            raw_text = el.get("title") or el.get("aria-label") or ""
+            m = re.search(r"(\d+(?:\.\d+)?)\s+out of", raw_text, re.IGNORECASE)
+            if m:
+                return float(m.group(1))
+
+            # Fallback: number directly inside the badge
+            inner_text = el.get_text(strip=True)
+            if re.fullmatch(r"\d+(?:\.\d+)?", inner_text):
+                return float(inner_text)
+
+            return None
+
+        critic = _score_from_label("Metascore")
+        if critic is not None and 0 <= critic <= 100:
+            result["critic_score"] = int(critic)
+
+        user = _score_from_label("User score")
+        if user is not None and 0 <= user <= 10:
+            result["user_score"] = user
+
+        # Legacy fallbacks (old Metacritic markup)
         if result["critic_score"] is None:
-            for el in soup.select('[data-testid="critic-score-value"], [class*="metascore"]'):
+            for el in soup.select(
+                'div[class*="c-siteReviewScore"] span, '
+                'span[class*="metascore_w"], '
+                '[data-testid="critic-score-value"]'
+            ):
                 score_text = el.get_text(strip=True)
                 if score_text.isdigit():
                     result["critic_score"] = int(score_text)
                     break
 
-        # Get user score
-        userscore_el = soup.select_one(
-            'div[class*="c-siteReviewScore_user"] span, '
-            'span[class*="user"], '
-            'div[class*="userscore"] span'
-        )
-        if userscore_el:
-            score_text = userscore_el.get_text(strip=True)
-            try:
-                # User scores are typically 0-10
-                user_score = float(score_text)
-                if 0 <= user_score <= 10:
-                    result["user_score"] = user_score
-            except ValueError:
-                pass
-
-        # Try alternative user score selector
         if result["user_score"] is None:
-            for el in soup.select('[data-testid="user-score-value"], [class*="userscore"]'):
-                score_text = el.get_text(strip=True)
+            for el in soup.select(
+                'div[class*="c-siteReviewScore_user"] span, '
+                '[data-testid="user-score-value"]'
+            ):
                 try:
-                    user_score = float(score_text)
-                    if 0 <= user_score <= 10:
-                        result["user_score"] = user_score
-                        break
+                    user_score = float(el.get_text(strip=True))
                 except ValueError:
                     continue
+                if 0 <= user_score <= 10:
+                    result["user_score"] = user_score
+                    break
 
         return result
 
@@ -249,7 +278,11 @@ def calculate_match_score(game_name, metacritic_result):
     if not metacritic_result or not game_name:
         return 0
 
-    mc_name = metacritic_result.get("name", "").lower() if metacritic_result.get("name") else ""
+    mc_name = (
+        metacritic_result.get("name", "").lower()
+        if metacritic_result.get("name")
+        else ""
+    )
     our_name = game_name.lower()
 
     if not mc_name:
@@ -303,16 +336,24 @@ def _process_single_game(client, game_id, name):
             details = client.get_game_by_slug(best_match["slug"])
 
             if details:
-                return (game_id, True, {
-                    "critic_score": details.get("critic_score"),
-                    "user_score": details.get("user_score"),
-                    "url": details.get("url"),
-                    "slug": details.get("slug"),
-                    "match_name": best_match.get("name", best_match["slug"]),
-                    "match_score": best_score,
-                })
+                return (
+                    game_id,
+                    True,
+                    {
+                        "critic_score": details.get("critic_score"),
+                        "user_score": details.get("user_score"),
+                        "url": details.get("url"),
+                        "slug": details.get("slug"),
+                        "match_name": best_match.get("name", best_match["slug"]),
+                        "match_score": best_score,
+                    },
+                )
             else:
-                return (game_id, False, f"Could not fetch details for: {best_match['slug']}")
+                return (
+                    game_id,
+                    False,
+                    f"Could not fetch details for: {best_match['slug']}",
+                )
         else:
             return (game_id, False, f"No good match (best score: {best_score:.0f})")
 
@@ -320,7 +361,9 @@ def _process_single_game(client, game_id, name):
         return (game_id, False, f"Error: {e}")
 
 
-def sync_games(conn, client, limit=None, force=False, max_workers=5, progress_callback=None):
+def sync_games(
+    conn, client, limit=None, force=False, max_workers=5, progress_callback=None
+):
     """Sync games with Metacritic using multithreading.
 
     Args:
@@ -359,7 +402,9 @@ def sync_games(conn, client, limit=None, force=False, max_workers=5, progress_ca
         games = games[:limit]
 
     total = len(games)
-    print(f"Processing {total} games for Metacritic scores with {max_workers} workers...")
+    print(
+        f"Processing {total} games for Metacritic scores with {max_workers} workers..."
+    )
 
     matched = 0
     failed = 0
@@ -400,7 +445,10 @@ def sync_games(conn, client, limit=None, force=False, max_workers=5, progress_ca
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
         future_to_game = {
-            executor.submit(_process_single_game, client, game_id, name): (game_id, name)
+            executor.submit(_process_single_game, client, game_id, name): (
+                game_id,
+                name,
+            )
             for game_id, name in games
         }
 
@@ -430,7 +478,9 @@ def sync_games(conn, client, limit=None, force=False, max_workers=5, progress_ca
                             score_str += f", User: {result['user_score']}"
                         score_str += ")"
 
-                    print(f"[{completed}/{total}] {name} → Matched: {result['match_name']} (match: {result['match_score']:.0f}){score_str}")
+                    print(
+                        f"[{completed}/{total}] {name} → Matched: {result['match_name']} (match: {result['match_score']:.0f}){score_str}"
+                    )
                 else:
                     # Mark as searched but not found
                     with results_lock:
@@ -458,7 +508,9 @@ def get_stats(conn):
     total = cursor.fetchone()[0]
 
     # Count matched games (metacritic_score >= 0, not counting -1 which means "not found")
-    cursor.execute("SELECT COUNT(*) FROM games WHERE metacritic_score IS NOT NULL AND metacritic_score >= 0")
+    cursor.execute(
+        "SELECT COUNT(*) FROM games WHERE metacritic_score IS NOT NULL AND metacritic_score >= 0"
+    )
     matched = cursor.fetchone()[0]
 
     cursor.execute(

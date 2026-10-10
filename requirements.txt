@@ -14,7 +14,7 @@ python-multipart
 jinja2
 
 # IGDB integration
-python-dotenv
+python-dotenv==1.2.1
 
 # Metacritic scraping
 beautifulsoup4
